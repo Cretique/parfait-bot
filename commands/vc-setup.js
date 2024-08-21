@@ -1,101 +1,92 @@
-const { SlashCommandBuilder, PermissionsBitField, ChannelType } = require('discord.js');
+const {
+  SlashCommandBuilder,
+  PermissionsBitField,
+  ChannelType,
+} = require("discord.js");
+const fs = require("fs");
+const path = require("path");
 
-const activeVoiceChannels = new Map();
-const channelDeletionTimeouts = new Map();
-const channelDeletionIntervals = new Map();
+const configFilePath = path.join(__dirname, "config.json");
 
-module.exports = {
-    data: new SlashCommandBuilder()
-        .setName('vc-setup')
-        .setDescription('Creates a private voice channel for you.'),
-    async execute(interaction) {
-        try {
-            const guild = interaction.guild;
-            const member = interaction.member;
-
-            if (activeVoiceChannels.has(member.id)) {
-                const existingChannelId = activeVoiceChannels.get(member.id);
-                const existingChannel = guild.channels.cache.get(existingChannelId);
-
-                if (existingChannel) {
-                    await interaction.reply({ content: `You already have an active private voice channel: ${existingChannel.name}.`, ephemeral: true });
-                    return;
-                } else {
-                    activeVoiceChannels.delete(member.id);
-                }
-            }
-
-            const channel = await guild.channels.create({
-                name: `${member.user.username}'s Voice Channel`,
-                type: ChannelType.GuildVoice,
-                permissionOverwrites: [
-                    {
-                        id: guild.id,
-                        deny: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.Connect],
-                    },
-                    {
-                        id: member.id,
-                        allow: [
-                            PermissionsBitField.Flags.ViewChannel,
-                            PermissionsBitField.Flags.Connect,
-                            PermissionsBitField.Flags.ManageChannels,
-                            PermissionsBitField.Flags.ManageRoles,
-                            PermissionsBitField.Flags.MuteMembers,
-                            PermissionsBitField.Flags.DeafenMembers,
-                            PermissionsBitField.Flags.MoveMembers,
-                        ],
-                    },
-                    {
-                        id: interaction.client.user.id,
-                        allow: [
-                            PermissionsBitField.Flags.ViewChannel,
-                            PermissionsBitField.Flags.Connect,
-                            PermissionsBitField.Flags.ManageChannels,
-                            PermissionsBitField.Flags.ManageRoles,
-                            PermissionsBitField.Flags.MuteMembers,
-                            PermissionsBitField.Flags.DeafenMembers,
-                            PermissionsBitField.Flags.MoveMembers,
-                            PermissionsBitField.Flags.ManageWebhooks,
-                        ],
-                    },
-                ],
-            });
-
-            activeVoiceChannels.set(member.id, channel.id);
-
-            if (member.voice.channel) {
-                await member.voice.setChannel(channel);
-                await interaction.reply({ content: `Your private voice channel has been created and you have been moved to it: ${channel.name}.`, ephemeral: true });
-            } else {
-                await interaction.reply({ content: `Your private voice channel has been created: ${channel.name}. Join it to start using!`, ephemeral: true });
-            }
-
-            const deleteTimeout = setTimeout(async () => {
-                if (channel.members.size === 0) {
-                    activeVoiceChannels.delete(member.id);
-                    await channel.delete();
-                    await interaction.followUp({ content: 'Your private voice channel was deleted due to inactivity.', ephemeral: true });
-                }
-            }, 5 * 60 * 1000);
-
-            channelDeletionTimeouts.set(channel.id, deleteTimeout);
-
-            const interval = setInterval(() => {
-                if (channel.members.size > 0) {
-                    clearTimeout(deleteTimeout);
-                    clearInterval(interval);
-                    channelDeletionTimeouts.delete(channel.id);
-                    channelDeletionIntervals.delete(channel.id);
-                }
-            }, 10000);
-
-            channelDeletionIntervals.set(channel.id, interval);
-
-        } catch (error) {
-            console.error('Error in vc-setup command:', error);
-            await interaction.reply({ content: 'There was an error while setting up your voice channel.', ephemeral: true });
-        }
-    },
-    activeVoiceChannels
+let setupConfig = {
+  categoryId: null,
+  requiredVoiceChannelId: null,
 };
 
+// Ayarları dosyaya kaydet
+function saveConfig() {
+  fs.writeFileSync(configFilePath, JSON.stringify(setupConfig, null, 2));
+}
+
+// Ayarları dosyadan oku
+function loadConfig() {
+  if (fs.existsSync(configFilePath)) {
+    const data = fs.readFileSync(configFilePath, "utf8");
+    setupConfig = JSON.parse(data);
+  }
+}
+
+// Bot başlatıldığında ayarları yükle
+loadConfig();
+
+module.exports = {
+  data: new SlashCommandBuilder()
+    .setName("vc-setup")
+    .setDescription(
+      "Sets up the category and required voice channel for private voice channels (Admin only)."
+    )
+    .addStringOption((option) =>
+      option
+        .setName("categoryid")
+        .setDescription(
+          "The ID of the category where the private voice channels should be created."
+        )
+        .setRequired(true)
+    )
+    .addStringOption((option) =>
+      option
+        .setName("voicechannelid")
+        .setDescription(
+          "The ID of the voice channel users must join before creating a private channel."
+        )
+        .setRequired(true)
+    ),
+  async execute(interaction) {
+    try {
+      if (
+        !interaction.member.permissions.has(
+          PermissionsBitField.Flags.Administrator
+        )
+      ) {
+        await interaction.reply({
+          content: "You do not have permission to use this command.",
+          ephemeral: true,
+        });
+        return;
+      }
+
+      const categoryId = interaction.options.getString("categoryid");
+      const voiceChannelId = interaction.options.getString("voicechannelid");
+
+      // Kategori ve ses kanalı ID'lerini ayarla
+      setupConfig.categoryId = categoryId;
+      setupConfig.requiredVoiceChannelId = voiceChannelId;
+
+      // Ayarları dosyaya kaydet
+      saveConfig();
+
+      await interaction.reply({
+        content: `Setup complete. Private voice channels will be created under category ID: ${categoryId} and users must join voice channel ID: ${voiceChannelId} before creating one.`,
+        ephemeral: true,
+      });
+    } catch (error) {
+      console.error("Error in vc-setup command:", error);
+      await interaction.reply({
+        content:
+          "There was an error while setting up the voice channel configuration.",
+        ephemeral: true,
+      });
+    }
+  },
+  setupConfig, // Config settings to be accessed by other commands
+};
