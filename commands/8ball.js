@@ -18,7 +18,7 @@ module.exports = {
             'Definitely',
             'Not sure',
             'Absolutely not',
-            'I wouldn\'t count on it'
+            'I wouldn\'t count on itt'
         ];
         const answer = answers[Math.floor(Math.random() * answers.length)];
 
