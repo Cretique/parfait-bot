@@ -6,12 +6,10 @@ const {
 const fs = require("fs");
 const path = require("path");
 
-const configFilePath = path.join(__dirname, "config.json");
+const configFilePath = path.join(__dirname, "../config/config.json");
 
-let setupConfig = {
-  categoryId: null,
-  requiredVoiceChannelId: null,
-};
+// Ayarları her sunucu için ayrı ayrı saklayacağımız boş bir nesne oluşturuyoruz
+let setupConfig = {};
 
 // Ayarları dosyaya kaydet
 function saveConfig() {
@@ -23,6 +21,8 @@ function loadConfig() {
   if (fs.existsSync(configFilePath)) {
     const data = fs.readFileSync(configFilePath, "utf8");
     setupConfig = JSON.parse(data);
+  } else {
+    setupConfig = { servers: {} }; // Dosya yoksa, boş bir yapı oluştur
   }
 }
 
@@ -65,12 +65,23 @@ module.exports = {
         return;
       }
 
+      const guildId = interaction.guild.id; // Sunucu ID'sini al
       const categoryId = interaction.options.getString("categoryid");
       const voiceChannelId = interaction.options.getString("voicechannelid");
 
+      // Eğer sunucunun bir yapılandırması yoksa, yeni bir nesne oluştur
+      if (!setupConfig.servers) {
+        setupConfig.servers = {};
+      }
+
+      // Eğer bu sunucu için zaten başka bir ayar varsa, onu koruyun
+      if (!setupConfig.servers[guildId]) {
+        setupConfig.servers[guildId] = {};
+      }
+
       // Kategori ve ses kanalı ID'lerini ayarla
-      setupConfig.categoryId = categoryId;
-      setupConfig.requiredVoiceChannelId = voiceChannelId;
+      setupConfig.servers[guildId].categoryId = categoryId;
+      setupConfig.servers[guildId].requiredVoiceChannelId = voiceChannelId;
 
       // Ayarları dosyaya kaydet
       saveConfig();

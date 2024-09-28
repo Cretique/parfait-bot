@@ -1,31 +1,69 @@
 const { SlashCommandBuilder, ChannelType } = require("discord.js");
+const { setupConfig } = require("./vc-setup");
 
-// `activeVoiceChannels` haritasını burada tanımlayın
 const activeVoiceChannels = new Map();
 
-function startVoiceChannelCleaner(guild) {
-  setInterval(async () => {
-    for (const [memberId, { id: channelId, counter }] of activeVoiceChannels) {
-      const channel = guild.channels.cache.get(channelId);
-      if (channel && channel.type === ChannelType.GuildVoice) {
-        const newCounter = channel.members.size;
-        if (newCounter === 0 && counter > 0) {
+function setupVoiceChannelCleaner(client) {
+  client.on("voiceStateUpdate", async (oldState, newState) => {
+    if (
+      oldState.channelId &&
+      (!newState.channelId || newState.channelId !== oldState.channelId)
+    ) {
+      const channel = oldState.channel;
+      if (!channel) return;
+
+      // Setup kanalını kontrol et
+      const guildSetup = setupConfig.servers[oldState.guild.id];
+      if (guildSetup && channel.id === guildSetup.requiredVoiceChannelId) {
+        console.log(`Skipping deletion for setup channel: ${channel.name}`);
+        return; // Setup kanalıysa silme işlemini atla
+      }
+
+      // Kanalın özel oluşturulmuş bir kanal olup olmadığını kontrol et
+      const isCustomChannel =
+        activeVoiceChannels.has(channel.id) ||
+        Array.from(activeVoiceChannels.values()).some(
+          (vc) => vc.id === channel.id
+        );
+      if (!isCustomChannel) {
+        console.log(
+          `Skipping deletion for non-custom channel: ${channel.name}`
+        );
+        return; // Özel oluşturulmuş bir kanal değilse silme işlemini atla
+      }
+
+      if (channel.members.size === 0) {
+        console.log(`Channel ${channel.name} is empty. Initiating deletion...`);
+
+        if (!channel.guild.members.me.permissions.has("ManageChannels")) {
           console.log(
-            `Channel ${channel.name} is empty now. Deleting the channel.`
+            "Bot doesn't have permission to manage channels. Deletion aborted."
           );
-          activeVoiceChannels.delete(memberId);
-          await channel.delete();
-          console.log(`Deleted empty voice channel: ${channel.name}`);
-        } else {
-          activeVoiceChannels.set(memberId, {
-            id: channelId,
-            counter: newCounter,
-          });
-          console.log(`Channel ${channel.name} has ${newCounter} members now.`);
+          return;
+        }
+
+        try {
+          await channel.delete(`Channel deleted due to inactivity.`);
+          console.log(`Empty channel deleted: ${channel.name}`);
+
+          // Her iki Map girişini de temizle
+          activeVoiceChannels.delete(channel.id);
+          for (const [userId, vc] of activeVoiceChannels.entries()) {
+            if (vc.id === channel.id) {
+              activeVoiceChannels.delete(userId);
+              break;
+            }
+          }
+        } catch (error) {
+          console.error(
+            `Error deleting channel ${channel.name}: ${error.message}`
+          );
         }
       }
     }
-  }, 10000); // 10 saniyede bir kontrol et
+  });
+
+  console.log("Voice channel cleaner set up successfully.");
 }
 
 module.exports = {
@@ -47,7 +85,7 @@ module.exports = {
       const channel = interaction.guild.channels.cache.get(channelInfo.id);
 
       if (channel) {
-        await channel.delete();
+        await channel.delete(`Requested by ${member.user.tag}`);
         activeVoiceChannels.delete(member.id);
         await interaction.reply({
           content: "Your private voice channel has been deleted.",
@@ -68,5 +106,5 @@ module.exports = {
     }
   },
   activeVoiceChannels,
-  startVoiceChannelCleaner,
+  setupVoiceChannelCleaner,
 };

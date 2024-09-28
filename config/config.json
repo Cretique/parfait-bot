@@ -1,0 +1,10 @@
+{
+  "servers": {
+    "750794934537289789": {
+      "welcomeChannelId": "762058074554499113",
+      "autoRoleId": "752514352866656377",
+      "categoryId": "895718938657296435",
+      "requiredVoiceChannelId": "1289586981143056530"
+    }
+  }
+}
