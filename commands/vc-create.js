@@ -4,10 +4,7 @@ const {
   ChannelType,
 } = require("discord.js");
 const { setupConfig } = require("./vc-setup");
-const {
-  activeVoiceChannels,
-  startVoiceChannelCleaner,
-} = require("./vc-delete");
+const { activeVoiceChannels } = require("./vc-delete");
 
 module.exports = {
   data: new SlashCommandBuilder()
@@ -15,69 +12,70 @@ module.exports = {
     .setDescription("Creates a private voice channel for you."),
   async execute(interaction) {
     try {
-      const guild = interaction.guild;
-      const member = interaction.member;
+      const { guild, member } = interaction;
+      const guildId = guild.id;
 
-      if (!setupConfig.categoryId || !setupConfig.requiredVoiceChannelId) {
-        await interaction.reply({
+      // Check server setup
+      if (!setupConfig.servers?.[guildId]) {
+        return await interaction.reply({
           content:
-            "The voice channel setup has not been completed by an admin. Please contact an admin.",
+            "Voice channel setup is not complete for this server. Please contact an admin.",
           ephemeral: true,
         });
-        return;
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 1000)); // 1 saniye gecikme
+      const { categoryId, requiredVoiceChannelId } =
+        setupConfig.servers[guildId];
 
-      const voiceState = guild.voiceStates.cache.get(member.id);
-
-      if (!voiceState) {
-        await interaction.reply({
-          content: "Unable to fetch your voice state. Please try again.",
+      if (!categoryId || !requiredVoiceChannelId) {
+        return await interaction.reply({
+          content:
+            "Voice channel setup is incomplete. Please contact an admin.",
           ephemeral: true,
         });
-        return;
       }
 
-      console.log(
-        "Required Voice Channel ID:",
-        setupConfig.requiredVoiceChannelId
-      );
-      console.log(
-        "User's Current Voice Channel ID:",
-        voiceState.channelId ? voiceState.channelId : "None"
-      );
+      // Fetch latest voice state
+      await guild.members.fetch(member.id);
+      const voiceState = member.voice;
 
-      if (
-        !voiceState.channelId ||
-        voiceState.channelId !== setupConfig.requiredVoiceChannelId
-      ) {
-        await interaction.reply({
-          content: `You must be in the required voice channel to create a private channel.`,
+      if (!voiceState.channelId) {
+        return await interaction.reply({
+          content: "You must be in a voice channel to use this command.",
           ephemeral: true,
         });
-        return;
       }
 
+      console.log("Required Voice Channel ID:", requiredVoiceChannelId);
+      console.log("User's Current Voice Channel ID:", voiceState.channelId);
+
+      if (voiceState.channelId !== requiredVoiceChannelId) {
+        return await interaction.reply({
+          content: `You must be in the designated voice channel to create a private channel.`,
+          ephemeral: true,
+        });
+      }
+
+      // Check for existing channel
       if (activeVoiceChannels.has(member.id)) {
         const existingChannelId = activeVoiceChannels.get(member.id).id;
         const existingChannel = guild.channels.cache.get(existingChannelId);
 
         if (existingChannel) {
-          await interaction.reply({
+          return await interaction.reply({
             content: `You already have an active private voice channel: ${existingChannel.name}.`,
             ephemeral: true,
           });
-          return;
         } else {
           activeVoiceChannels.delete(member.id);
         }
       }
 
+      // Create new channel
       const channel = await guild.channels.create({
         name: `『 ${member.user.username}'s Voice Channel 』`,
         type: ChannelType.GuildVoice,
-        parent: setupConfig.categoryId,
+        parent: categoryId,
         permissionOverwrites: [
           {
             id: guild.id,
@@ -114,25 +112,26 @@ module.exports = {
         ],
       });
 
-      // Kanalı aktif kanallar listesine ekle ve sayacı başlat
-      activeVoiceChannels.set(member.id, { id: channel.id, counter: 0 });
+      activeVoiceChannels.set(member.id, { id: channel.id, counter: 1 });
+      activeVoiceChannels.set(channel.id, { creatorId: member.id });
 
-      // Kullanıcıyı otomatik olarak yeni kanala taşı
-      await member.voice.setChannel(channel);
-      await interaction.reply({
+      await voiceState.setChannel(channel);
+
+      return await interaction.reply({
         content: `Your private voice channel has been created and you have been moved to it: ${channel.name}.`,
         ephemeral: true,
       });
-
-      // Ses kanalını otomatik temizleme işlemi için kontrol başlat
-      startVoiceChannelCleaner(guild);
     } catch (error) {
       console.error("Error in vc-create command:", error);
-      await interaction.reply({
-        content:
-          "There was an error while creating your private voice channel.",
-        ephemeral: true,
-      });
+
+      const errorMessage =
+        "There was an error while creating your private voice channel.";
+
+      if (interaction.replied || interaction.deferred) {
+        await interaction.followUp({ content: errorMessage, ephemeral: true });
+      } else {
+        await interaction.reply({ content: errorMessage, ephemeral: true });
+      }
     }
   },
 };
